@@ -1,5 +1,5 @@
 import { readFile, listDirectory } from "@/commands/fs"
-import { invoke } from "@tauri-apps/api/core"
+import { isTauriRuntime, tauriInvoke } from "@/lib/runtime"
 import type { EmbeddingConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
@@ -83,7 +83,8 @@ async function fetchEmbedding(
 // ── LanceDB operations via Tauri commands ─────────────────────────────────
 
 async function vectorUpsert(projectPath: string, pageId: string, embedding: number[]): Promise<void> {
-  await invoke("vector_upsert", {
+  if (!isTauriRuntime()) return
+  await tauriInvoke("vector_upsert", {
     projectPath: normalizePath(projectPath),
     pageId,
     embedding: embedding.map((v) => Math.fround(v)), // ensure f32
@@ -91,7 +92,8 @@ async function vectorUpsert(projectPath: string, pageId: string, embedding: numb
 }
 
 async function vectorSearchLance(projectPath: string, queryEmbedding: number[], topK: number): Promise<Array<{ page_id: string; score: number }>> {
-  return await invoke("vector_search", {
+  if (!isTauriRuntime()) return []
+  return await tauriInvoke<Array<{ page_id: string; score: number }>>("vector_search", {
     projectPath: normalizePath(projectPath),
     queryEmbedding: queryEmbedding.map((v) => Math.fround(v)),
     topK,
@@ -99,14 +101,16 @@ async function vectorSearchLance(projectPath: string, queryEmbedding: number[], 
 }
 
 async function vectorDelete(projectPath: string, pageId: string): Promise<void> {
-  await invoke("vector_delete", {
+  if (!isTauriRuntime()) return
+  await tauriInvoke("vector_delete", {
     projectPath: normalizePath(projectPath),
     pageId,
   })
 }
 
 async function vectorCount(projectPath: string): Promise<number> {
-  return await invoke("vector_count", {
+  if (!isTauriRuntime()) return 0
+  return await tauriInvoke<number>("vector_count", {
     projectPath: normalizePath(projectPath),
   })
 }

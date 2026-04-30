@@ -13,6 +13,7 @@ const pkgJson = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"),
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
+  base: process.env.VITE_BASE_PATH || "/llm-wiki/",
 
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },

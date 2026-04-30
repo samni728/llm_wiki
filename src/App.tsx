@@ -1,14 +1,15 @@
 import { useState, useEffect } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
 import i18n from "@/i18n"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
-import { listDirectory, openProject } from "@/commands/fs"
+import { listDirectory, listProjects, openProject } from "@/commands/fs"
 import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId } from "@/lib/project-store"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { isTauriRuntime, openTauriDirectory } from "@/lib/runtime"
+import { applyManagedRuntimeConfig, loadManagedRuntimeConfig } from "@/lib/managed-runtime"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
@@ -26,7 +27,7 @@ function App() {
   // Set up auto-save and clip watcher once on mount
   useEffect(() => {
     setupAutoSave()
-    startClipWatcher()
+    if (isTauriRuntime()) startClipWatcher()
   }, [])
 
   // Background update check — hydrate persisted user preferences, then
@@ -34,6 +35,7 @@ function App() {
   // mount so it doesn't contend with startup work. Silent on failure;
   // the UI in Settings → About surfaces the result.
   useEffect(() => {
+    if (!isTauriRuntime()) return
     let cancelled = false
     const timer = setTimeout(async () => {
       if (cancelled) return
@@ -84,51 +86,52 @@ function App() {
   useEffect(() => {
     async function init() {
       try {
-        const savedConfig = await loadLlmConfig()
-        if (savedConfig) {
-          useWikiStore.getState().setLlmConfig(savedConfig)
-        }
-        const savedProviderConfigs = await loadProviderConfigs()
-        if (savedProviderConfigs) {
-          useWikiStore.getState().setProviderConfigs(savedProviderConfigs)
-        }
-        const savedActivePreset = await loadActivePresetId()
-        if (savedActivePreset) {
-          useWikiStore.getState().setActivePresetId(savedActivePreset)
-          // Re-resolve the active preset's LlmConfig from (preset defaults
-          // + saved overrides). Without this, preset default updates
-          // (e.g. a corrected Anthropic model ID shipped in a release)
-          // never reach users who are relying on defaults — their stored
-          // `llmConfig` snapshot from a previous launch would keep the
-          // old value. Overrides still win, so an explicit user choice
-          // is preserved.
-          const { LLM_PRESETS } = await import("@/components/settings/llm-presets")
-          const { resolveConfig } = await import("@/components/settings/preset-resolver")
-          const preset = LLM_PRESETS.find((p) => p.id === savedActivePreset)
-          if (preset) {
-            const currentFallback = useWikiStore.getState().llmConfig
-            const override = (savedProviderConfigs ?? {})[savedActivePreset]
-            const resolved = resolveConfig(preset, override, currentFallback)
-            useWikiStore.getState().setLlmConfig(resolved)
-            const { saveLlmConfig } = await import("@/lib/project-store")
-            await saveLlmConfig(resolved)
+        const managedRuntime = await loadManagedRuntimeConfig()
+        if (managedRuntime) {
+          await applyManagedRuntimeConfig(managedRuntime)
+        } else {
+          const savedConfig = await loadLlmConfig()
+          if (savedConfig) {
+            useWikiStore.getState().setLlmConfig(savedConfig)
           }
-        }
-        const savedSearchConfig = await loadSearchApiConfig()
-        if (savedSearchConfig) {
-          useWikiStore.getState().setSearchApiConfig(savedSearchConfig)
-        }
-        const savedEmbeddingConfig = await loadEmbeddingConfig()
-        if (savedEmbeddingConfig) {
-          useWikiStore.getState().setEmbeddingConfig(savedEmbeddingConfig)
-        }
-        const savedOutputLang = await loadOutputLanguage()
-        if (savedOutputLang) {
-          useWikiStore.getState().setOutputLanguage(savedOutputLang)
-        }
-        const savedLang = await loadLanguage()
-        if (savedLang) {
-          await i18n.changeLanguage(savedLang)
+          const savedProviderConfigs = await loadProviderConfigs()
+          if (savedProviderConfigs) {
+            useWikiStore.getState().setProviderConfigs(savedProviderConfigs)
+          }
+          const savedActivePreset = await loadActivePresetId()
+          if (savedActivePreset) {
+            useWikiStore.getState().setActivePresetId(savedActivePreset)
+            // Re-resolve the active preset's LlmConfig from (preset defaults
+            // + saved overrides). Without this, preset default updates
+            // never reach users who are relying on defaults.
+            const { LLM_PRESETS } = await import("@/components/settings/llm-presets")
+            const { resolveConfig } = await import("@/components/settings/preset-resolver")
+            const preset = LLM_PRESETS.find((p) => p.id === savedActivePreset)
+            if (preset) {
+              const currentFallback = useWikiStore.getState().llmConfig
+              const override = (savedProviderConfigs ?? {})[savedActivePreset]
+              const resolved = resolveConfig(preset, override, currentFallback)
+              useWikiStore.getState().setLlmConfig(resolved)
+              const { saveLlmConfig } = await import("@/lib/project-store")
+              await saveLlmConfig(resolved)
+            }
+          }
+          const savedSearchConfig = await loadSearchApiConfig()
+          if (savedSearchConfig) {
+            useWikiStore.getState().setSearchApiConfig(savedSearchConfig)
+          }
+          const savedEmbeddingConfig = await loadEmbeddingConfig()
+          if (savedEmbeddingConfig) {
+            useWikiStore.getState().setEmbeddingConfig(savedEmbeddingConfig)
+          }
+          const savedOutputLang = await loadOutputLanguage()
+          if (savedOutputLang) {
+            useWikiStore.getState().setOutputLanguage(savedOutputLang)
+          }
+          const savedLang = await loadLanguage()
+          if (savedLang) {
+            await i18n.changeLanguage(savedLang)
+          }
         }
         const lastProject = await getLastProject()
         if (lastProject) {
@@ -171,22 +174,22 @@ function App() {
         console.error("Failed to restore ingest queue:", err)
       )
     })
-    // Notify local clip server of the current project + all recent projects
-    fetch("http://127.0.0.1:19827/project", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: proj.path }),
-    }).catch(() => {})
-
-    // Send all recent projects to clip server for extension project picker
-    getRecentProjects().then((recents) => {
-      const projects = recents.map((p) => ({ name: p.name, path: p.path }))
-      fetch("http://127.0.0.1:19827/projects", {
+    if (isTauriRuntime()) {
+      fetch("http://127.0.0.1:19827/project", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projects }),
+        body: JSON.stringify({ path: proj.path }),
       }).catch(() => {})
-    }).catch(() => {})
+
+      getRecentProjects().then((recents) => {
+        const projects = recents.map((p) => ({ name: p.name, path: p.path }))
+        fetch("http://127.0.0.1:19827/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projects }),
+        }).catch(() => {})
+      }).catch(() => {})
+    }
     try {
       const tree = await listDirectory(proj.path)
       setFileTree(tree)
@@ -224,22 +227,32 @@ function App() {
       const validated = await openProject(proj.path)
       await handleProjectOpened(validated)
     } catch (err) {
-      window.alert(`Failed to open project: ${err}`)
+      window.alert(`打开企业 Wiki 失败：${err}`)
     }
   }
 
   async function handleOpenProject() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Open Wiki Project",
-    })
+    if (!isTauriRuntime()) {
+      try {
+        const projects = await listProjects()
+        if (projects[0]) {
+          await handleProjectOpened(projects[0])
+          return
+        }
+        window.alert("企业 Wiki 工作区暂未发现可打开的 Wiki。请先新建 Wiki，或联系管理员确认后端工作区配置。")
+      } catch (err) {
+        window.alert(`无法获取企业 Wiki 项目列表：${err}`)
+      }
+      return
+    }
+
+    const selected = await openTauriDirectory("打开企业 Wiki 项目")
     if (!selected) return
     try {
       const proj = await openProject(selected)
       await handleProjectOpened(proj)
     } catch (err) {
-      window.alert(`Failed to open project: ${err}`)
+      window.alert(`打开企业 Wiki 失败：${err}`)
     }
   }
 

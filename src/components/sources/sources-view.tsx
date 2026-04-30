@@ -1,11 +1,9 @@
-import { useState, useEffect, useCallback } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
-import { invoke } from "@tauri-apps/api/core"
-import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
+import { useRef, useState, useEffect, useCallback, type ChangeEvent } from "react"
+import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Upload, FolderPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
-import { copyFile, listDirectory, readFile, writeFile, deleteFile, findRelatedWikiPages, preprocessFile } from "@/commands/fs"
+import { copyFile, listDirectory, readFile, writeFile, deleteFile, findRelatedWikiPages, preprocessFile, createDirectory, uploadSourceFiles } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { startIngest } from "@/lib/ingest"
 import { enqueueIngest, enqueueBatch } from "@/lib/ingest-queue"
@@ -20,6 +18,10 @@ import {
 } from "@/lib/wiki-cleanup"
 import { parseSources, writeSources } from "@/lib/sources-merge"
 import { decidePageFate } from "@/lib/source-delete-decision"
+import { isTauriRuntime, tauriInvoke } from "@/lib/runtime"
+import { checkIngestCache } from "@/lib/ingest-cache"
+
+type SourceIngestStatus = "checking" | "new" | "indexed"
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -31,9 +33,15 @@ export function SourcesView() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const setChatExpanded = useWikiStore((s) => s.setChatExpanded)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const permissions = useWikiStore((s) => s.permissions)
   const [sources, setSources] = useState<FileNode[]>([])
+  const [sourceStatuses, setSourceStatuses] = useState<Record<string, SourceIngestStatus>>({})
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
+  const [uploadTargetDir, setUploadTargetDir] = useState("raw/sources")
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const isTauri = isTauriRuntime()
+  const canManageWebSources = !isTauri && Boolean(permissions?.admin)
 
   const loadSources = useCallback(async () => {
     if (!project) return
@@ -43,8 +51,13 @@ export function SourcesView() {
       // Filter out hidden files/dirs and cache
       const filtered = filterTree(tree)
       setSources(filtered)
+      const files = flattenFiles(filtered)
+      setSourceStatuses(Object.fromEntries(files.map((file) => [file.path, "checking"])))
+      const statuses = await getSourceIngestStatuses(pp, files)
+      setSourceStatuses(statuses)
     } catch {
       setSources([])
+      setSourceStatuses({})
     }
   }, [project])
 
@@ -52,8 +65,16 @@ export function SourcesView() {
     loadSources()
   }, [loadSources])
 
-  async function handleImport() {
+  async function handleImport(targetDir: string = "raw/sources") {
     if (!project) return
+
+    if (!isTauri) {
+      setUploadTargetDir(targetDir)
+      fileInputRef.current?.click()
+      return
+    }
+
+    const { open } = await import("@tauri-apps/plugin-dialog")
 
     const selected = await open({
       multiple: true,
@@ -124,9 +145,55 @@ export function SourcesView() {
     }
   }
 
-  async function handleImportFolder() {
+  async function handleWebFilesSelected(event: ChangeEvent<HTMLInputElement>) {
     if (!project) return
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ""
+    if (files.length === 0) return
 
+    setImporting(true)
+    try {
+      await uploadSourceFiles(project.path, files, uploadTargetDir)
+      await loadSources()
+      const tree = await listDirectory(normalizePath(project.path))
+      setFileTree(tree)
+      useWikiStore.getState().bumpDataVersion()
+    } catch (err) {
+      window.alert(String(err))
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  async function handleCreateFolder() {
+    if (!project) return
+    const name = window.prompt("新建 sources 子文件夹名称")
+    const cleanName = (name || "").trim().replace(/[\\/]+/g, "-")
+    if (!cleanName) return
+    try {
+      await createDirectory(`${normalizePath(project.path)}/raw/sources/${cleanName}`)
+      await loadSources()
+      const tree = await listDirectory(normalizePath(project.path))
+      setFileTree(tree)
+      useWikiStore.getState().bumpDataVersion()
+    } catch (err) {
+      window.alert(`创建文件夹失败：${err}`)
+    }
+  }
+
+  function handleUploadToFolder(node: FileNode) {
+    if (!project) return
+    const projectPrefix = `${normalizePath(project.path)}/`
+    const targetDir = normalizePath(node.path).startsWith(projectPrefix)
+      ? normalizePath(node.path).slice(projectPrefix.length)
+      : "raw/sources"
+    handleImport(targetDir)
+  }
+
+  async function handleImportFolder() {
+    if (!project || !isTauri) return
+
+    const { open } = await import("@tauri-apps/plugin-dialog")
     const selected = await open({
       directory: true,
       title: "Import Source Folder",
@@ -141,7 +208,7 @@ export function SourcesView() {
 
     try {
       // Recursively copy the folder
-      const copiedFiles: string[] = await invoke("copy_directory", {
+      const copiedFiles: string[] = await tauriInvoke("copy_directory", {
         source: selected,
         destination: destDir,
       })
@@ -351,9 +418,23 @@ export function SourcesView() {
     try {
       setChatExpanded(true)
       setActiveView("wiki")
+      if (!isTauri) {
+        setSourceStatuses((prev) => ({ ...prev, [node.path]: "checking" }))
+        await enqueueIngest(project.id, node.path)
+        waitForSourceIndexed(normalizePath(project.path), node)
+          .then((status) => {
+            setSourceStatuses((prev) => ({ ...prev, [node.path]: status }))
+          })
+          .catch(() => {
+            setSourceStatuses((prev) => ({ ...prev, [node.path]: "new" }))
+          })
+        return
+      }
       await startIngest(normalizePath(project.path), node.path, llmConfig)
     } catch (err) {
       console.error("Failed to start ingest:", err)
+      setSourceStatuses((prev) => ({ ...prev, [node.path]: "new" }))
+      window.alert(`提取到 Wiki 失败：${err}`)
     } finally {
       setIngestingPath(null)
     }
@@ -364,17 +445,42 @@ export function SourcesView() {
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">{t("sources.title")}</h2>
         <div className="flex gap-1">
+          {!isTauri && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleWebFilesSelected}
+            />
+          )}
           <Button variant="ghost" size="icon" onClick={loadSources} title="Refresh">
             <RefreshCw className="h-4 w-4" />
           </Button>
-          <Button size="sm" onClick={handleImport} disabled={importing}>
-            <Plus className="mr-1 h-4 w-4" />
-            {importing ? t("sources.importing") : t("sources.import")}
-          </Button>
-          <Button size="sm" onClick={handleImportFolder} disabled={importing}>
-            <Plus className="mr-1 h-4 w-4" />
-            {t("sources.importFolder", "Folder")}
-          </Button>
+          {isTauri && (
+            <>
+              <Button size="sm" onClick={() => handleImport()} disabled={importing}>
+                <Plus className="mr-1 h-4 w-4" />
+                {importing ? t("sources.importing") : t("sources.import")}
+              </Button>
+              <Button size="sm" onClick={handleImportFolder} disabled={importing}>
+                <Plus className="mr-1 h-4 w-4" />
+                {t("sources.importFolder", "Folder")}
+              </Button>
+            </>
+          )}
+          {canManageWebSources && (
+            <>
+              <Button variant="outline" size="sm" onClick={handleCreateFolder} disabled={importing}>
+                <FolderPlus className="mr-1 h-4 w-4" />
+                新建文件夹
+              </Button>
+              <Button size="sm" onClick={() => handleImport()} disabled={importing}>
+                <Upload className="mr-1 h-4 w-4" />
+                {importing ? t("sources.importing") : t("sources.import")}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -382,17 +488,37 @@ export function SourcesView() {
         {sources.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
             <p>{t("sources.noSources")}</p>
-            <p>{t("sources.importHint")}</p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleImport}>
-                <Plus className="mr-1 h-4 w-4" />
-                {t("sources.importFiles")}
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleImportFolder}>
-                <Plus className="mr-1 h-4 w-4" />
-                Folder
-              </Button>
-            </div>
+            <p>
+              {isTauri
+                ? t("sources.importHint")
+                : canManageWebSources
+                  ? "上传企业文章到 raw/sources，然后点击资料旁的 Ingest 图标提取为 Wiki。"
+                  : "企业 Web 模式下，原始资料入口仅管理员可维护。"}
+            </p>
+            {isTauri && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleImport()}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  {t("sources.importFiles")}
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleImportFolder}>
+                  <Plus className="mr-1 h-4 w-4" />
+                  Folder
+                </Button>
+              </div>
+            )}
+            {canManageWebSources && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleImport()} disabled={importing}>
+                  <Upload className="mr-1 h-4 w-4" />
+                  {t("sources.importFiles")}
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleCreateFolder} disabled={importing}>
+                  <FolderPlus className="mr-1 h-4 w-4" />
+                  新建文件夹
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="p-2">
@@ -401,6 +527,8 @@ export function SourcesView() {
               onOpen={handleOpenSource}
               onIngest={handleIngest}
               onDelete={handleDelete}
+              onUploadToFolder={canManageWebSources ? handleUploadToFolder : undefined}
+              sourceStatuses={sourceStatuses}
               ingestingPath={ingestingPath}
               depth={0}
             />
@@ -487,6 +615,8 @@ function SourceTree({
   onOpen,
   onIngest,
   onDelete,
+  onUploadToFolder,
+  sourceStatuses,
   ingestingPath,
   depth,
 }: {
@@ -494,6 +624,8 @@ function SourceTree({
   onOpen: (node: FileNode) => void
   onIngest: (node: FileNode) => void
   onDelete: (node: FileNode) => void
+  onUploadToFolder?: (node: FileNode) => void
+  sourceStatuses: Record<string, SourceIngestStatus>
   ingestingPath: string | null
   depth: number
 }) {
@@ -517,28 +649,45 @@ function SourceTree({
           const isCollapsed = collapsed[node.path] ?? false
           return (
             <div key={node.path}>
-              <button
-                onClick={() => toggle(node.path)}
-                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              <div
+                className="flex w-full items-center gap-1 rounded-md px-1 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 style={{ paddingLeft: `${depth * 16 + 4}px` }}
               >
-                {isCollapsed ? (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                <button
+                  onClick={() => toggle(node.path)}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                  <Folder className="h-4 w-4 shrink-0 text-amber-500" />
+                  <span className="truncate font-medium">{node.name}</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground/60 shrink-0">
+                    {countFiles(node.children)}
+                  </span>
+                </button>
+                {onUploadToFolder && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    title="Upload here"
+                    onClick={() => onUploadToFolder(node)}
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                  </Button>
                 )}
-                <Folder className="h-4 w-4 shrink-0 text-amber-500" />
-                <span className="truncate font-medium">{node.name}</span>
-                <span className="ml-auto text-[10px] text-muted-foreground/60 shrink-0">
-                  {countFiles(node.children)}
-                </span>
-              </button>
+              </div>
               {!isCollapsed && (
                 <SourceTree
                   nodes={node.children}
                   onOpen={onOpen}
                   onIngest={onIngest}
                   onDelete={onDelete}
+                  onUploadToFolder={onUploadToFolder}
+                  sourceStatuses={sourceStatuses}
                   ingestingPath={ingestingPath}
                   depth={depth + 1}
                 />
@@ -546,6 +695,11 @@ function SourceTree({
             </div>
           )
         }
+
+        const status = sourceStatuses[node.path] ?? "new"
+        const isIndexed = status === "indexed"
+        const isChecking = status === "checking"
+        const isIngesting = ingestingPath === node.path
 
         return (
           <div
@@ -560,15 +714,33 @@ function SourceTree({
               <FileText className="h-4 w-4 shrink-0" />
               <span className="truncate">{node.name}</span>
             </button>
+            <span
+              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${
+                isIndexed
+                  ? "bg-emerald-500/10 text-emerald-700"
+                  : isChecking
+                    ? "bg-muted text-muted-foreground"
+                    : "bg-blue-500/10 text-blue-700"
+              }`}
+              title={
+                isIndexed
+                  ? "已提取到 Wiki，内容未变化"
+                  : isChecking
+                    ? "正在检查提取状态"
+                    : "新资料或内容已变更，可提取到 Wiki"
+              }
+            >
+              {isIndexed ? "已提取" : isChecking ? "检查中" : "新资料"}
+            </span>
             <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              title="Ingest"
-              disabled={ingestingPath === node.path}
+              title={isIndexed ? "已提取到 Wiki，内容变化后再重新提取" : "提取到 Wiki"}
+              disabled={isIngesting || isChecking || isIndexed}
               onClick={() => onIngest(node)}
             >
-              <BookOpen className="h-4 w-4" />
+              <BookOpen className={`h-4 w-4 ${isIndexed ? "text-emerald-600" : ""}`} />
             </Button>
             <Button
               variant="ghost"
@@ -584,6 +756,60 @@ function SourceTree({
       })}
     </>
   )
+}
+
+function flattenFiles(nodes: FileNode[]): FileNode[] {
+  const files: FileNode[] = []
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      files.push(...flattenFiles(node.children))
+    } else if (!node.is_dir) {
+      files.push(node)
+    }
+  }
+  return files
+}
+
+async function getSourceIngestStatuses(
+  projectPath: string,
+  files: FileNode[],
+): Promise<Record<string, SourceIngestStatus>> {
+  const entries = await Promise.all(files.map(async (file) => {
+    try {
+      const content = await readFile(file.path)
+      const cachedFiles = await checkIngestCache(projectPath, file.name, content)
+      return [file.path, cachedFiles ? "indexed" : "new"] as const
+    } catch {
+      return [file.path, "new"] as const
+    }
+  }))
+
+  return Object.fromEntries(entries)
+}
+
+async function getSingleSourceIngestStatus(
+  projectPath: string,
+  file: FileNode,
+): Promise<SourceIngestStatus> {
+  try {
+    const content = await readFile(file.path)
+    const cachedFiles = await checkIngestCache(projectPath, file.name, content)
+    return cachedFiles ? "indexed" : "new"
+  } catch {
+    return "new"
+  }
+}
+
+async function waitForSourceIndexed(
+  projectPath: string,
+  file: FileNode,
+): Promise<SourceIngestStatus> {
+  for (let attempt = 0; attempt < 90; attempt++) {
+    const status = await getSingleSourceIngestStatus(projectPath, file)
+    if (status === "indexed") return status
+    await new Promise((resolve) => window.setTimeout(resolve, 2000))
+  }
+  return "new"
 }
 
 function flattenMdFiles(nodes: FileNode[]): FileNode[] {

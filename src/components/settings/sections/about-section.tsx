@@ -6,13 +6,16 @@ import { Button } from "@/components/ui/button"
 import { useUpdateStore, shouldShowUpdateBanner } from "@/stores/update-store"
 import { checkForUpdates } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
+import { isTauriRuntime } from "@/lib/runtime"
 
 export function AboutSection() {
   const { t } = useTranslation()
+  const isTauri = isTauriRuntime()
   const [clipStatus, setClipStatus] = useState<string>("...")
   const updateStore = useUpdateStore()
 
   useEffect(() => {
+    if (!isTauri) return
     let alive = true
     clipServerStatus()
       .then((s) => {
@@ -24,9 +27,10 @@ export function AboutSection() {
     return () => {
       alive = false
     }
-  }, [])
+  }, [isTauri])
 
   const handleCheckNow = useCallback(async () => {
+    if (!isTauri) return
     useUpdateStore.getState().setChecking(true)
     const result = await checkForUpdates({
       currentVersion: __APP_VERSION__,
@@ -43,7 +47,7 @@ export function AboutSection() {
       lastCheckedAt: now,
       dismissedVersion: null,
     })
-  }, [])
+  }, [isTauri])
 
   const handleDismiss = useCallback(async () => {
     const result = useUpdateStore.getState().lastResult
@@ -68,7 +72,9 @@ export function AboutSection() {
 
   const rows: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: t("settings.sections.about.version"), value: `v${__APP_VERSION__}`, mono: true },
-    { label: t("settings.sections.about.clipServer"), value: `${clipStatus}  @  127.0.0.1:19827`, mono: true },
+    ...(isTauri
+      ? [{ label: t("settings.sections.about.clipServer"), value: `${clipStatus}  @  127.0.0.1:19827`, mono: true }]
+      : []),
   ]
 
   const showBanner = shouldShowUpdateBanner(updateStore)
@@ -101,7 +107,7 @@ export function AboutSection() {
         ))}
       </div>
 
-      {/* ── Update check card ──────────────────────────────────── */}
+      {isTauri && (
       <div className="space-y-3 rounded-md border p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -159,22 +165,7 @@ export function AboutSection() {
           {t("settings.sections.about.autoCheck")}
         </label>
       </div>
-
-      <div className="rounded-md border p-4 text-sm">
-        <div className="font-medium">LLM Wiki</div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t("settings.sections.about.appDescription")}
-          {" "}
-          <a
-            className="underline underline-offset-2 hover:text-primary"
-            href="https://github.com/nashsu/llm_wiki"
-            target="_blank"
-            rel="noreferrer"
-          >
-            github.com/nashsu/llm_wiki
-          </a>
-        </p>
-      </div>
+      )}
     </div>
   )
 }

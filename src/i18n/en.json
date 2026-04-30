@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "LLM Wiki",
-    "subtitle": "Build and maintain your personal knowledge base with LLMs"
+    "subtitle": "Build and maintain an internal enterprise knowledge base with LLMs"
   },
   "nav": {
     "wiki": "Wiki",
@@ -14,16 +14,16 @@
     "switchProject": "Switch Project"
   },
   "welcome": {
-    "newProject": "New Project",
-    "openProject": "Open Project",
-    "recentProjects": "Recent Projects"
+    "newProject": "New Enterprise Wiki",
+    "openProject": "Open Enterprise Wiki",
+    "recentProjects": "Recent Enterprise Wikis"
   },
   "project": {
-    "createTitle": "Create New Wiki Project",
-    "name": "Project Name",
-    "namePlaceholder": "my-research-wiki",
-    "parentDir": "Parent Directory",
-    "template": "Template",
+    "createTitle": "Create Enterprise Wiki Project",
+    "name": "Wiki Name",
+    "namePlaceholder": "yanse-enterprise-wiki",
+    "parentDir": "Enterprise Wiki Workspace",
+    "template": "Knowledge Base Template",
     "cancel": "Cancel",
     "create": "Create",
     "creating": "Creating..."

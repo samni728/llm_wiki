@@ -14,6 +14,7 @@ import { findSurprisingConnections, detectKnowledgeGaps, type SurprisingConnecti
 import { queueResearch } from "@/lib/deep-research"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { normalizePath } from "@/lib/path-utils"
+import { isTauriRuntime } from "@/lib/runtime"
 
 const NODE_TYPE_COLORS: Record<string, string> = {
   entity: "#60a5fa",    // blue-400
@@ -296,6 +297,7 @@ function ZoomControls() {
 // --- Main component ---
 
 export function GraphView() {
+  const isTauri = isTauriRuntime()
   const project = useWikiStore((s) => s.project)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -769,18 +771,20 @@ export function GraphView() {
                           <div className="font-medium text-xs text-foreground mb-1">{gap.title}</div>
                           <p className="text-xs text-muted-foreground mb-2">{gap.description}</p>
                           <p className="text-xs text-muted-foreground/80 italic mb-2">{gap.suggestion}</p>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            className="h-7 text-xs gap-1"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleResearchClick(gap.title, gap.description, gap.type)
-                            }}
-                          >
-                            <Search className="h-3.5 w-3.5" />
-                            Deep Research
-                          </Button>
+                          {isTauri && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleResearchClick(gap.title, gap.description, gap.type)
+                              }}
+                            >
+                              <Search className="h-3.5 w-3.5" />
+                              Deep Research
+                            </Button>
+                          )}
                         </div>
                       )
                     })}
@@ -793,7 +797,7 @@ export function GraphView() {
       </div>
 
       {/* Research Topic Confirmation Dialog */}
-      {researchDialog && (
+      {isTauri && researchDialog && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-[480px] rounded-lg border bg-background shadow-xl">
             <div className="flex items-center justify-between border-b px-4 py-3">

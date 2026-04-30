@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
 import { FolderOpen, Plus, Clock, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { listProjects } from "@/commands/fs"
 import { getRecentProjects, removeFromRecentProjects } from "@/lib/project-store"
+import { isTauriRuntime } from "@/lib/runtime"
 import type { WikiProject } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
 
@@ -20,7 +22,8 @@ export function WelcomeScreen({
   const [recentProjects, setRecentProjects] = useState<WikiProject[]>([])
 
   useEffect(() => {
-    getRecentProjects().then(setRecentProjects).catch(() => {})
+    const loadProjects = isTauriRuntime() ? getRecentProjects : listProjects
+    loadProjects().then(setRecentProjects).catch(() => setRecentProjects([]))
   }, [])
 
   async function handleRemoveRecent(e: React.MouseEvent, path: string) {
@@ -67,20 +70,22 @@ export function WelcomeScreen({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{proj.name}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {proj.path}
+                      企业 Wiki 工作区
                     </div>
                   </div>
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => handleRemoveRecent(e, proj.path)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleRemoveRecent(e as unknown as React.MouseEvent, proj.path)
-                    }}
-                    className="ml-2 shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
-                  >
-                    <X className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
+                  {isTauriRuntime() && (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => handleRemoveRecent(e, proj.path)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRemoveRecent(e as unknown as React.MouseEvent, proj.path)
+                      }}
+                      className="ml-2 shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
+                    >
+                      <X className="h-3.5 w-3.5 text-muted-foreground" />
+                    </div>
+                  )}
                 </button>
               ))}
             </div>

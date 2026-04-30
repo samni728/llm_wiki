@@ -10,6 +10,7 @@ import { useUpdateStore, shouldShowUpdateBanner } from "@/stores/update-store"
 import { useTranslation } from "react-i18next"
 import logoImg from "@/assets/logo.jpg"
 import type { WikiState } from "@/stores/wiki-store"
+import { isTauriRuntime } from "@/lib/runtime"
 
 type NavView = WikiState["activeView"]
 
@@ -35,10 +36,15 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   const researchActiveCount = useResearchStore((s) => s.tasks.filter((t) => t.status !== "done" && t.status !== "error").length)
   const toggleResearchPanel = useResearchStore((s) => s.setPanelOpen)
   const updateBannerVisible = useUpdateStore((s) => shouldShowUpdateBanner(s))
+  const permissions = useWikiStore((s) => s.permissions)
+  const isTauri = isTauriRuntime()
+  const canManageSources = isTauri || Boolean(permissions?.admin)
+  const visibleNavItems = canManageSources ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.view !== "sources")
 
   // Daemon health check
   const [daemonStatus, setDaemonStatus] = useState<string>("starting")
   useEffect(() => {
+    if (!isTauri) return
     const check = async () => {
       try {
         const { clipServerStatus } = await import("@/commands/fs")
@@ -51,7 +57,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
     check()
     const interval = setInterval(check, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [isTauri])
 
   return (
     <TooltipProvider delay={300}>
@@ -66,7 +72,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
         </div>
         {/* Top: main nav items + Deep Research */}
         <div className="flex flex-1 flex-col items-center gap-1">
-          {NAV_ITEMS.map(({ view, icon: Icon, labelKey }) => (
+          {visibleNavItems.map(({ view, icon: Icon, labelKey }) => (
             <Tooltip key={view}>
               <TooltipTrigger
                 onClick={() => setActiveView(view)}
@@ -89,47 +95,49 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
               </TooltipContent>
             </Tooltip>
           ))}
-          {/* Deep Research — same row as other nav items */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => toggleResearchPanel(!researchPanelOpen)}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
-                researchPanelOpen
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-              }`}
-            >
-              <Globe className="h-5 w-5" />
-              {researchActiveCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
-                  {researchActiveCount}
-                </span>
-              )}
-            </TooltipTrigger>
-            <TooltipContent side="right">Deep Research</TooltipContent>
-          </Tooltip>
+          {isTauri && (
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => toggleResearchPanel(!researchPanelOpen)}
+                className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
+                  researchPanelOpen
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+                }`}
+              >
+                <Globe className="h-5 w-5" />
+                {researchActiveCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
+                    {researchActiveCount}
+                  </span>
+                )}
+              </TooltipTrigger>
+              <TooltipContent side="right">Deep Research</TooltipContent>
+            </Tooltip>
+          )}
         </div>
         {/* Bottom: daemon status + settings + switch project */}
         <div className="flex flex-col items-center gap-1 pb-1">
-          {/* Daemon status indicator */}
-          <Tooltip>
-            <TooltipTrigger className="flex h-6 w-6 items-center justify-center">
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${
-                  daemonStatus === "running" ? "bg-emerald-500" :
-                  daemonStatus === "starting" ? "bg-amber-400 animate-pulse" :
-                  daemonStatus === "port_conflict" ? "bg-red-500" :
-                  "bg-red-500 animate-pulse"
-                }`}
-              />
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {daemonStatus === "running" && "Clip server running"}
-              {daemonStatus === "starting" && "Clip server starting..."}
-              {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
-              {daemonStatus === "error" && "Clip server error. Restarting..."}
-            </TooltipContent>
-          </Tooltip>
+          {isTauri && (
+            <Tooltip>
+              <TooltipTrigger className="flex h-6 w-6 items-center justify-center">
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    daemonStatus === "running" ? "bg-emerald-500" :
+                    daemonStatus === "starting" ? "bg-amber-400 animate-pulse" :
+                    daemonStatus === "port_conflict" ? "bg-red-500" :
+                    "bg-red-500 animate-pulse"
+                  }`}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {daemonStatus === "running" && "Clip server running"}
+                {daemonStatus === "starting" && "Clip server starting..."}
+                {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
+                {daemonStatus === "error" && "Clip server error. Restarting..."}
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               onClick={() => setActiveView("settings")}
@@ -162,7 +170,9 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
             >
               <ArrowLeftRight className="h-5 w-5" />
             </TooltipTrigger>
-            <TooltipContent side="right">{t("nav.switchProject")}</TooltipContent>
+            <TooltipContent side="right">
+              {isTauri ? t("nav.switchProject") : "选择 / 新建 Wiki"}
+            </TooltipContent>
           </Tooltip>
         </div>
       </div>

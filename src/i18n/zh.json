@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "LLM Wiki",
-    "subtitle": "用 LLM 构建和维护你的个人知识库"
+    "subtitle": "用 LLM 构建和维护企业内部知识库"
   },
   "nav": {
     "wiki": "Wiki",
@@ -14,16 +14,16 @@
     "switchProject": "切换项目"
   },
   "welcome": {
-    "newProject": "新建项目",
-    "openProject": "打开项目",
-    "recentProjects": "最近项目"
+    "newProject": "新建企业 Wiki",
+    "openProject": "打开企业 Wiki",
+    "recentProjects": "最近打开的企业 Wiki"
   },
   "project": {
-    "createTitle": "新建 Wiki 项目",
-    "name": "项目名称",
-    "namePlaceholder": "my-research-wiki",
-    "parentDir": "父目录",
-    "template": "模板",
+    "createTitle": "新建企业 Wiki 项目",
+    "name": "Wiki 名称",
+    "namePlaceholder": "yanse-enterprise-wiki",
+    "parentDir": "企业 Wiki 工作区",
+    "template": "知识库模板",
     "cancel": "取消",
     "create": "创建",
     "creating": "创建中..."

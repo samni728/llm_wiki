@@ -41,6 +41,10 @@ let processedSinceDrain = false
 // cancels a long-running judgment instead of burning tokens.
 let sweepAbortController: AbortController | null = null
 
+function isManagedWikiPath(path: string): boolean {
+  return normalizePath(path).startsWith("wiki://")
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────
 
 function queueFilePath(projectPath: string): string {
@@ -446,11 +450,13 @@ async function processNext(projectId: string): Promise<void> {
   // in the registry (was deleted or never registered), mark as failed.
   const registryPath = await getProjectPathById(projectId)
   const pp = registryPath ? normalizePath(registryPath) : ""
+  const activePathFallback = currentProjectId === projectId ? normalizePath(currentProjectPath) : ""
+  const projectPath = pp || activePathFallback
 
   // Check we're still active after the registry await.
   if (currentProjectId !== projectId) return
 
-  if (!pp) {
+  if (!projectPath) {
     next.status = "failed"
     next.error = "Project not found in registry (was it deleted?)"
     await saveQueue(currentProjectPath)
@@ -460,7 +466,7 @@ async function processNext(projectId: string): Promise<void> {
 
   processing = true
   next.status = "processing"
-  await saveQueue(pp)
+  await saveQueue(projectPath)
   if (currentProjectId !== projectId) return
 
   const llmConfig = useWikiStore.getState().llmConfig
@@ -470,14 +476,15 @@ async function processNext(projectId: string): Promise<void> {
     next.status = "failed"
     next.error = "LLM not configured — set API key in Settings"
     processing = false
-    await saveQueue(pp)
+    await saveQueue(projectPath)
     processNext(projectId)
     return
   }
 
-  const fullSourcePath = isAbsolutePath(next.sourcePath)
-    ? normalizePath(next.sourcePath)
-    : `${pp}/${next.sourcePath}`
+  const fullSourcePath =
+    isManagedWikiPath(next.sourcePath) || isAbsolutePath(next.sourcePath)
+      ? normalizePath(next.sourcePath)
+      : `${projectPath}/${next.sourcePath}`
 
   console.log(`[Ingest Queue] Processing: ${next.sourcePath} (${queue.filter((t) => t.projectId === projectId && t.status === "pending").length} remaining)`)
 
@@ -485,7 +492,7 @@ async function processNext(projectId: string): Promise<void> {
   lastWrittenFiles = []
 
   try {
-    const writtenFiles = await autoIngest(pp, fullSourcePath, llmConfig, currentAbortController.signal, next.folderContext)
+    const writtenFiles = await autoIngest(projectPath, fullSourcePath, llmConfig, currentAbortController.signal, next.folderContext)
     // Stale-context guard: project switched during the long LLM call.
     // Bail without mutating queue or writing to disk — pauseQueue has
     // already persisted the correct state to the old project's file,
@@ -506,7 +513,7 @@ async function processNext(projectId: string): Promise<void> {
     lastWrittenFiles = []
     queue = queue.filter((t) => t.id !== next.id)
     processedSinceDrain = true
-    await saveQueue(pp)
+    await saveQueue(projectPath)
 
     console.log(`[Ingest Queue] Done: ${next.sourcePath}`)
   } catch (err) {
@@ -524,7 +531,7 @@ async function processNext(projectId: string): Promise<void> {
       console.log(`[Ingest Queue] Error (retry ${next.retryCount}/${MAX_RETRIES}): ${next.sourcePath} — ${message}`)
     }
 
-    await saveQueue(pp)
+    await saveQueue(projectPath)
   }
 
   processing = false

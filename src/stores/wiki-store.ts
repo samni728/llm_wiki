@@ -31,6 +31,15 @@ interface EmbeddingConfig {
   model: string // e.g. "text-embedding-qwen3-embedding-0.6b"
 }
 
+export interface WikiPermissions {
+  read: boolean
+  write: boolean
+  update: boolean
+  delete: boolean
+  admin: boolean
+  denied?: boolean
+}
+
 /**
  * Output language for LLM-generated content (wiki pages, chat responses, research).
  * "auto" = detect from user input / source document language.
@@ -88,6 +97,7 @@ interface WikiState {
   activePresetId: string | null
   searchApiConfig: SearchApiConfig
   embeddingConfig: EmbeddingConfig
+  permissions: WikiPermissions | null
   outputLanguage: OutputLanguage
   dataVersion: number
 
@@ -102,6 +112,7 @@ interface WikiState {
   setActivePresetId: (id: string | null) => void
   setSearchApiConfig: (config: SearchApiConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
+  setPermissions: (permissions: WikiPermissions | null) => void
   setOutputLanguage: (lang: OutputLanguage) => void
   bumpDataVersion: () => void
 }
@@ -143,6 +154,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     apiKey: "",
     model: "",
   },
+  permissions: null,
 
   outputLanguage: "auto",
 
@@ -151,6 +163,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setActivePresetId: (activePresetId) => set({ activePresetId }),
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
+  setPermissions: (permissions) => set({ permissions }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))

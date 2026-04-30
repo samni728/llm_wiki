@@ -17,6 +17,8 @@
  * from any environment without crashing at module load.
  */
 
+import { isTauriRuntime } from "./runtime"
+
 let pluginFetchPromise: Promise<typeof globalThis.fetch> | null = null
 
 /**
@@ -30,6 +32,7 @@ let pluginFetchPromise: Promise<typeof globalThis.fetch> | null = null
  * The promise is cached, so repeated calls don't re-import the plugin.
  */
 export function getHttpFetch(): Promise<typeof globalThis.fetch> {
+  if (!isTauriRuntime()) return Promise.resolve(globalThis.fetch.bind(globalThis))
   if (!pluginFetchPromise) {
     pluginFetchPromise = import("@tauri-apps/plugin-http")
       .then((m) => m.fetch as unknown as typeof globalThis.fetch)

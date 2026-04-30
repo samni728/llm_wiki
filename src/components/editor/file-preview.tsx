@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core"
+import { useEffect, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -15,6 +15,7 @@ import {
 import { getFileCategory, getCodeLanguage } from "@/lib/file-types"
 import type { FileCategory } from "@/lib/file-types"
 import { getFileName } from "@/lib/path-utils"
+import { isTauriRuntime } from "@/lib/runtime"
 
 interface FilePreviewProps {
   filePath: string
@@ -48,7 +49,8 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
 }
 
 function ImagePreview({ filePath, fileName }: { filePath: string; fileName: string }) {
-  const src = convertFileSrc(filePath)
+  const src = useTauriAssetUrl(filePath)
+  if (!src) return <BinaryPlaceholder filePath={filePath} fileName={fileName} category="image" />
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4 text-xs text-muted-foreground">{filePath}</div>
@@ -64,7 +66,8 @@ function ImagePreview({ filePath, fileName }: { filePath: string; fileName: stri
 }
 
 function VideoPreview({ filePath, fileName }: { filePath: string; fileName: string }) {
-  const src = convertFileSrc(filePath)
+  const src = useTauriAssetUrl(filePath)
+  if (!src) return <BinaryPlaceholder filePath={filePath} fileName={fileName} category="video" />
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4 text-xs text-muted-foreground">{filePath}</div>
@@ -82,7 +85,8 @@ function VideoPreview({ filePath, fileName }: { filePath: string; fileName: stri
 }
 
 function AudioPreview({ filePath, fileName }: { filePath: string; fileName: string }) {
-  const src = convertFileSrc(filePath)
+  const src = useTauriAssetUrl(filePath)
+  if (!src) return <BinaryPlaceholder filePath={filePath} fileName={fileName} category="audio" />
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
       <div className="text-xs text-muted-foreground">{filePath}</div>
@@ -93,6 +97,30 @@ function AudioPreview({ filePath, fileName }: { filePath: string; fileName: stri
       </audio>
     </div>
   )
+}
+
+function useTauriAssetUrl(filePath: string): string {
+  const [src, setSrc] = useState("")
+
+  useEffect(() => {
+    let alive = true
+    async function load() {
+      if (!isTauriRuntime()) {
+        if (alive) setSrc("")
+        return
+      }
+      const { convertFileSrc } = await import("@tauri-apps/api/core")
+      if (alive) setSrc(convertFileSrc(filePath))
+    }
+    load().catch(() => {
+      if (alive) setSrc("")
+    })
+    return () => {
+      alive = false
+    }
+  }, [filePath])
+
+  return src
 }
 
 function CodePreview({ filePath, content }: { filePath: string; content: string }) {

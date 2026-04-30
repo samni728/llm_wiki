@@ -16,6 +16,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { isTauriRuntime } from "@/lib/runtime"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -290,6 +291,7 @@ function ReviewCard({
 }) {
   const config = typeConfig[item.type]
   const Icon = config.icon
+  const isTauri = isTauriRuntime()
 
   return (
     <div
@@ -320,7 +322,7 @@ function ReviewCard({
 
       {!item.resolved ? (
         <div className="flex flex-wrap gap-1.5">
-          {(item.type === "suggestion" || item.type === "missing-page") && (
+          {isTauri && (item.type === "suggestion" || item.type === "missing-page") && (
             <Button
               variant="default"
               size="sm"

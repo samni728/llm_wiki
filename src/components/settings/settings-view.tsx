@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { saveLanguage } from "@/lib/project-store"
+import { isManagedRuntime, loadManagedRuntimeConfig, type ManagedRuntimeConfig } from "@/lib/managed-runtime"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
@@ -90,6 +91,7 @@ export function SettingsView() {
 
   const [active, setActive] = useState<CategoryId>("llm")
   const [saved, setSaved] = useState(false)
+  const [managedRuntime, setManagedRuntime] = useState<ManagedRuntimeConfig | null>(null)
   const [draft, setDraftState] = useState<SettingsDraft>(() =>
     initialDraft(
       llmConfig,
@@ -100,6 +102,10 @@ export function SettingsView() {
       i18n.language,
     ),
   )
+
+  useEffect(() => {
+    loadManagedRuntimeConfig().then(setManagedRuntime).catch(() => setManagedRuntime(null))
+  }, [])
 
   // Resync draft from store if it changes out-of-band (e.g. project switch).
   useEffect(() => {
@@ -178,6 +184,9 @@ export function SettingsView() {
   ])
 
   const body = useMemo(() => {
+    if (isManagedRuntime(managedRuntime)) {
+      return <ManagedEnterpriseSettings config={managedRuntime as ManagedRuntimeConfig} />
+    }
     switch (active) {
       case "llm":
         // The LLM section manages its own store state (per-provider
@@ -195,7 +204,11 @@ export function SettingsView() {
       case "about":
         return <AboutSection />
     }
-  }, [active, draft, setDraft])
+  }, [active, draft, managedRuntime, setDraft])
+
+  const categories = isManagedRuntime(managedRuntime)
+    ? CATEGORIES.filter((category) => category.id === "llm")
+    : CATEGORIES
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -206,7 +219,7 @@ export function SettingsView() {
           {t("settings.title")}
         </div>
         <nav className="flex-1 overflow-y-auto px-2 pb-3">
-          {CATEGORIES.map((c) => {
+          {categories.map((c) => {
             const Icon = c.icon
             const isActive = c.id === active
             return (
@@ -242,7 +255,7 @@ export function SettingsView() {
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
             - "about" has no editable fields */}
-        {active !== "about" && active !== "llm" && (
+        {!isManagedRuntime(managedRuntime) && active !== "about" && active !== "llm" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">
@@ -254,6 +267,60 @@ export function SettingsView() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function ManagedEnterpriseSettings({ config }: { config: ManagedRuntimeConfig }) {
+  const permissions = config.permissions
+  const rows = [
+    ["模型配置", config.llm?.model || "后台未配置"],
+    ["模型入口", "由妍色智能系统后台统一代理"],
+    ["向量嵌入", config.embedding?.enabled ? config.embedding.model : "后台未启用"],
+    ["Rerank", config.rerank?.enabled ? config.rerank.model : "后台未启用"],
+    ["网页搜索", "默认关闭，由管理员后台统一控制"],
+    ["输出语言", "简体中文"],
+    ["工作区", "企业 Wiki 工作区"],
+  ]
+  const permissionRows = [
+    ["只读 / 查询", permissions?.read],
+    ["写入", permissions?.write],
+    ["更新", permissions?.update],
+    ["删除", permissions?.delete],
+    ["Wiki 管理", permissions?.admin],
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-semibold">企业 Wiki 配置</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          当前实例由妍色智能系统后台统一管理模型、向量、权限、语言和工作区。员工侧只负责创建、阅读和维护被授权的企业知识。
+        </p>
+      </div>
+
+      <div className="rounded-md border divide-y">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-4 px-4 py-2.5">
+            <span className="text-sm text-muted-foreground">{label}</span>
+            <span className="text-right text-sm font-medium">{value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md border p-4">
+        <div className="text-sm font-medium">当前账号权限</div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {permissionRows.map(([label, allowed]) => (
+            <div key={label as string} className="rounded border bg-muted/20 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">{label as string}</span>
+              <span className={`ml-2 font-medium ${allowed ? "text-emerald-600" : "text-muted-foreground"}`}>
+                {allowed ? "允许" : "禁止"}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
